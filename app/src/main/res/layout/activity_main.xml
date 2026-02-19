@@ -42,6 +42,16 @@
             android:text="Играть снова"
             android:textSize="20sp" />
 
+        <Button
+            android:id="@+id/records_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:padding="16dp"
+            android:text="История рекордов"
+            android:backgroundTint="#FF9800"
+            android:textSize="18sp" />
+
     </LinearLayout>
 
 </FrameLayout>
