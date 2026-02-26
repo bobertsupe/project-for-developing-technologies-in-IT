@@ -57,24 +57,35 @@ public class GameView extends SurfaceView implements Runnable {
     @Override
     public void run() {
         long lastFrameTime = System.nanoTime();
+        final long targetFrameTime = 1_000_000_000 / 60; // 60 FPS
+
         while (isPlaying) {
             long currentFrameTime = System.nanoTime();
             float deltaTime = (currentFrameTime - lastFrameTime) / 1_000_000_000f;
             lastFrameTime = currentFrameTime;
 
+            GameData.GameState prevState = gameData.currentState;
+            
             // 1. Физика (Логика)
             physics.update(deltaTime, targetX);
 
-            // 2. Проверка Game Over
-            if (gameData.isGameOver) {
-                isPlaying = false;
-                activity.runOnUiThread(() -> onGameOverCallback.accept(gameData.score));
+            // Оповещение об окончании игры (смерть в обычном режиме или в битве с боссом)
+            if ((prevState == GameData.GameState.PLAYING || prevState == GameData.GameState.BOSS_STATE) 
+                    && gameData.currentState == GameData.GameState.GAME_OVER) {
+                if (onGameOverCallback != null) {
+                    onGameOverCallback.accept(gameData.score);
+                }
             }
 
-            // 3. Рендеринг (Графика)
+            // 2. Рендеринг (Графика)
             drawFrame();
             
-            limitFPS();
+            // Точное ограничение FPS
+            long frameDuration = System.nanoTime() - currentFrameTime;
+            long sleepTimeMs = (targetFrameTime - frameDuration) / 1_000_000;
+            if (sleepTimeMs > 0) {
+                try { Thread.sleep(sleepTimeMs); } catch (InterruptedException ignored) {}
+            }
         }
     }
 
@@ -91,10 +102,10 @@ public class GameView extends SurfaceView implements Runnable {
 
     public void restartGame() {
         gameData.reset();
+        physics.resetDifficulty();
         gameData.player.x = getWidth() / 2f - gameData.player.rect.width() / 2f;
         gameData.player.updateRect();
         targetX = (int) gameData.player.rect.centerX();
-        resume();
     }
 
     public void resume() {
@@ -112,15 +123,29 @@ public class GameView extends SurfaceView implements Runnable {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (gameData.isGameOver) return false;
-        if (event.getAction() == MotionEvent.ACTION_DOWN || event.getAction() == MotionEvent.ACTION_MOVE) {
-            targetX = (int) event.getX();
+        float x = event.getX();
+        float y = event.getY();
+
+        if (event.getAction() == MotionEvent.ACTION_DOWN) {
+            if (gameData.currentState == GameData.GameState.MENU) {
+                if (gameData.startButtonRect.contains(x, y)) {
+                    restartGame();
+                }
+                return true;
+            }
+            if (gameData.currentState == GameData.GameState.GAME_OVER) {
+                gameData.currentState = GameData.GameState.MENU;
+                return true;
+            }
+        }
+
+        // Разрешаем управление в обычном режиме и во время битвы с боссом
+        if (gameData.currentState == GameData.GameState.PLAYING || gameData.currentState == GameData.GameState.BOSS_STATE) {
+            if (event.getAction() == MotionEvent.ACTION_DOWN || event.getAction() == MotionEvent.ACTION_MOVE) {
+                targetX = (int) x;
+            }
         }
         return true;
-    }
-
-    private void limitFPS() {
-        try { Thread.sleep(10); } catch (InterruptedException ignored) {}
     }
 
     private Bitmap getBitmapFromVectorDrawable(Context context, int drawableId, int width, int height) {

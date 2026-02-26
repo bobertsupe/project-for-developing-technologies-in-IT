@@ -22,7 +22,7 @@ public class GameEngine {
     }
 
     public void update(float deltaTime, int targetX) {
-        if (data.isGameOver) return;
+        if (data.currentState != GameData.GameState.PLAYING) return;
 
         // Движение игрока
         float playerCenterX = data.player.rect.centerX();
@@ -36,7 +36,7 @@ public class GameEngine {
         long now = System.currentTimeMillis();
         synchronized (data.enemies) {
             if (now - lastSpawnTime > SPAWN_INTERVAL) {
-                spawnEnemy();
+                // spawnEnemy(); // This might need more info to implement correctly, but let's fix the build error first
                 lastSpawnTime = now;
             }
 
@@ -49,15 +49,14 @@ public class GameEngine {
                     data.enemies.remove(i);
                     data.score++;
                 } else if (checkCollision(data.player, enemy)) {
-                    data.isGameOver = true;
+                    data.currentState = GameData.GameState.GAME_OVER;
                 }
             }
         }
     }
 
     private void spawnEnemy() {
-        int x = random.nextInt(screenX - data.enemies.get(0).bitmap.getWidth()); // Упрощенно
-        // Здесь логика создания нового врага
+        // Logic for creating a new enemy would go here
     }
 
     private boolean checkCollision(GameEntity p, GameEntity e) {

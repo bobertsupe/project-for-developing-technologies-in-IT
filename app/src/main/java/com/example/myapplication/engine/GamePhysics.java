@@ -1,7 +1,8 @@
 package com.example.myapplication.engine;
 
 import android.graphics.Bitmap;
-import android.graphics.Rect;
+import com.example.myapplication.engine.systems.*;
+import com.example.myapplication.model.Bullet;
 import com.example.myapplication.model.GameData;
 import com.example.myapplication.model.GameEntity;
 import java.util.Random;
@@ -12,10 +13,15 @@ public class GamePhysics {
     private final Random random = new Random();
     private final Bitmap enemyBitmap;
 
-    private static final float PLAYER_SPEED = 1600f;
-    private static final float ENEMY_SPEED = 850f;
-    private static final int SPAWN_INTERVAL = 350;
+    // Системы
+    private final DifficultyConfig config = new DifficultyConfig();
+    private final LevelSystem levelSystem = new LevelSystem();
+    private final PlayerSystem playerSystem = new PlayerSystem();
+    private final CollisionSystem collisionSystem = new CollisionSystem();
+
     private long lastSpawnTime = 0;
+    private long lastShotTime = 0;
+    private float bossDirection = 1f;
 
     public GamePhysics(GameData data, int x, int y, Bitmap enemyBitmap) {
         this.data = data;
@@ -24,55 +30,126 @@ public class GamePhysics {
         this.enemyBitmap = enemyBitmap;
     }
 
-    public void update(float deltaTime, int targetX) {
-        if (data.isGameOver) return;
+    public void resetDifficulty() {
+        config.reset();
+    }
 
-        // Игрок
-        float playerCenterX = data.player.rect.centerX();
-        if (Math.abs(playerCenterX - targetX) > 10) {
-            if (playerCenterX < targetX) data.player.x += PLAYER_SPEED * deltaTime;
-            else data.player.x -= PLAYER_SPEED * deltaTime;
-            data.player.updateRect();
+    public void update(float deltaTime, int targetX) {
+        if (data.currentState == GameData.GameState.MENU || data.currentState == GameData.GameState.GAME_OVER) return;
+
+        // 1. Управление игроком
+        playerSystem.update(data, deltaTime, targetX, config.playerSpeed);
+
+        // 2. Логика состояний
+        if (data.currentState == GameData.GameState.PLAYING) {
+            updateNormalMode(deltaTime);
+        } else if (data.currentState == GameData.GameState.BOSS_STATE) {
+            updateBossMode(deltaTime);
+        }
+    }
+
+    private void updateNormalMode(float deltaTime) {
+        // Проверка на босса (циклическое появление каждые 100 очков)
+        if (data.score >= data.nextBossScore) {
+            startBossBattle();
+            return;
         }
 
-        // Враги
+        // Уровни и сложность
+        levelSystem.update(data, config);
+
+        // Спавн и движение врагов
         synchronized (data.enemies) {
             long now = System.currentTimeMillis();
-            if (now - lastSpawnTime > SPAWN_INTERVAL) {
+            if (now - lastSpawnTime > config.spawnInterval) {
                 spawnEnemy();
                 lastSpawnTime = now;
             }
 
             for (int i = data.enemies.size() - 1; i >= 0; i--) {
                 GameEntity enemy = data.enemies.get(i);
-                enemy.y += ENEMY_SPEED * deltaTime;
+                enemy.y += config.enemySpeed * deltaTime;
                 enemy.updateRect();
 
                 if (enemy.y > screenY) {
-                    data.enemies.remove(i);
+                    recycleEnemy(i);
                     data.score++;
-                } else if (isColliding(data.player, enemy)) {
-                    data.isGameOver = true;
+                } else if (collisionSystem.isColliding(data.player, enemy)) {
+                    data.currentState = GameData.GameState.GAME_OVER;
                 }
             }
         }
     }
 
-    private void spawnEnemy() {
-        int x = random.nextInt(screenX - enemyBitmap.getWidth());
-        data.enemies.add(new GameEntity(enemyBitmap, x, -enemyBitmap.getHeight()));
+    private void updateBossMode(float deltaTime) {
+        if (data.boss == null) return;
+
+        // Движение босса
+        if (data.boss.y < 200) data.boss.y += 200 * deltaTime;
+        else {
+            data.boss.x += bossDirection * 400 * deltaTime;
+            if (data.boss.x <= 0 || data.boss.x >= screenX - data.boss.rect.width()) bossDirection *= -1;
+        }
+        data.boss.updateRect();
+
+        // Стрельба
+        long now = System.currentTimeMillis();
+        if (now - lastShotTime > 2000) {
+            data.bullets.add(new Bullet(data.player.rect.centerX(), data.player.y));
+            lastShotTime = now;
+        }
+
+        // Пули
+        for (int i = data.bullets.size() - 1; i >= 0; i--) {
+            Bullet b = data.bullets.get(i);
+            b.update(deltaTime);
+            if (b.y < -50) data.bullets.remove(i);
+            else if (data.boss.rect.contains((int)b.x, (int)b.y)) {
+                data.bullets.remove(i);
+                data.bossHP--;
+                if (data.bossHP <= 0) winBossBattle();
+            }
+        }
+
+        if (collisionSystem.isColliding(data.player, data.boss)) {
+            data.currentState = GameData.GameState.GAME_OVER;
+        }
     }
 
-    private boolean isColliding(GameEntity p, GameEntity e) {
-        float scale = 0.7f;
-        int pw = (int) (p.rect.width() * (1 - scale) / 2);
-        int ph = (int) (p.rect.height() * (1 - scale) / 2);
-        int ew = (int) (e.rect.width() * (1 - scale) / 2);
-        int eh = (int) (e.rect.height() * (1 - scale) / 2);
+    private void startBossBattle() {
+        data.currentState = GameData.GameState.BOSS_STATE;
+        synchronized (data.enemies) {
+            data.enemyPool.addAll(data.enemies);
+            data.enemies.clear();
+        }
+        data.boss = new GameEntity(enemyBitmap, screenX / 2f - enemyBitmap.getWidth(), -enemyBitmap.getHeight() * 2);
+        data.bossHP = 2; // для тестов хп снижено до 2 (сеччас не трогать)изменить потом на 20
+    }
 
-        return p.rect.left + pw < e.rect.right - ew &&
-               p.rect.right - pw > e.rect.left + ew &&
-               p.rect.top + ph < e.rect.bottom - eh &&
-               p.rect.bottom - ph > e.rect.top + eh;
+    private void winBossBattle() {
+        data.score += 50;
+        // Устанавливаем порог для следующего босса (например, через каждые 150 очков после текущего счета)
+        data.nextBossScore = data.score + 100; //парамет отвечающий за появление босс изменить потом на 100
+        
+        data.boss = null;
+        data.bullets.clear();
+        data.currentState = GameData.GameState.PLAYING;
+        
+        // Показываем сообщение о победе
+        data.levelMessage = "BOSS DEFEATED!";
+        data.levelMessageEndTime = System.currentTimeMillis() + 2000;
+    }
+
+    private void spawnEnemy() {
+        int x = random.nextInt(Math.max(1, screenX - enemyBitmap.getWidth()));
+        GameEntity enemy = data.enemyPool.isEmpty() ? 
+            new GameEntity(enemyBitmap, x, -enemyBitmap.getHeight()) : 
+            data.enemyPool.remove(data.enemyPool.size() - 1);
+        enemy.set(x, -enemyBitmap.getHeight());
+        data.enemies.add(enemy);
+    }
+
+    private void recycleEnemy(int index) {
+        data.enemyPool.add(data.enemies.remove(index));
     }
 }

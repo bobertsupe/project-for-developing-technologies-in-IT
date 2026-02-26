@@ -18,6 +18,12 @@ public class GameEntity {
         this.rect = new Rect((int) x, (int) y, (int) x + bitmap.getWidth(), (int) y + bitmap.getHeight());
     }
 
+    public void set(float x, float y) {
+        this.x = x;
+        this.y = y;
+        updateRect();
+    }
+
     public void updateRect() {
         rect.offsetTo((int) x, (int) y);
     }
